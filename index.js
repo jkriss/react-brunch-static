@@ -10,6 +10,7 @@ var fs = require('fs');
 var ReactDOM = require('react-dom/server');
 var fm = require('front-matter');
 var path = require('path');
+var cheerio = require('cheerio');
 
 var ReactBrunchStatic = function(config) {
   var layout = config.layout ? fs.readFileSync(config.layout, 'utf-8') : '<!doctype html><html><body>{{ content }}</body></html>';
@@ -22,25 +23,37 @@ ReactBrunchStatic.prototype = {
     return filename.replace(/\.static\.jsx$/, '.html');
   },
   compile: function(data, filename, callback) {
-    console.log("data:", data, "filename:", filename);
+    // console.log("data:", data, "filename:", filename);
     var page = fm(data);
-    console.log("page:", page);
-    var entryFile = path.resolve(page.attributes.entry);
-    console.log("entry:", entryFile)
+    // console.log("page:", page);
 
-    var ReactRoot = React.createFactory(require(entryFile))
-    var content = ReactDOM.renderToString(ReactRoot(page.attributes.props));
+    var html = this.bodyTemplate({ content : page.body })
+    var $ = cheerio.load(html);
 
-    var html = this.bodyTemplate({ content : content })
-    console.log("result:", html)
-    console.log("watching:", path.relative('./', entryFile))
-    // TODO dependencies should include anything included from entry point. hm.
+    var js = "";
+
+    for (var selector in page.attributes.bindings) {
+      var file = page.attributes.bindings[selector];
+      var ReactElement = React.createFactory(require(path.resolve(path.join('./app', file))));
+
+
+      var reactContent = ReactDOM.renderToString(ReactElement());
+      $(selector).html(reactContent);
+      js += `
+        ReactDOM.render(React.createFactory(require('${file.replace(/^\.\//,'')}'))(), document.querySelector('${selector}'));
+      `
+    }
+
+    // inject bootstrap js
+    $('body').append(`<script>${js}</script>`);
+
+    // console.log("new html:\n", $.html());
+
     callback(null, [
-      { filename : this.transformPath(filename), content : html }
-    ],
-    [
-      [path.relative('./', entryFile)]
-    ])
+      { filename : this.transformPath(filename), content : $.html()}
+    ]
+    // TODO track dependency graph, add dependencies here
+    )
   }
 };
 
